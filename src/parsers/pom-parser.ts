@@ -147,12 +147,12 @@ export class PomParser {
     // Build context: first resolve parent chain, then merge local
     const context = await this.buildContext(absolutePath, project, inheritedContext);
     
-    // Extract project info
-    const projectName = project.name || project.artifactId || 'unknown';
-    const projectVersion = this.resolveProperty(
-      project.version || project.parent?.version || '0.0.0',
-      context.properties
-    );
+    // Extract project info - resolve any property placeholders
+    const rawName = project.name || project.artifactId || 'unknown';
+    const projectName = this.resolveProperty(String(rawName), context.properties);
+    
+    // Use already-resolved version from context
+    const projectVersion = context.projectVersion || '0.0.0';
 
     // Extract dependencies using the full context
     const dependencies = this.extractDependencies(project, context);
@@ -223,16 +223,21 @@ export class PomParser {
       }
     }
 
-    // Add local properties (override parent)
+    // Add local properties FIRST (override parent)
+    // This is important because ${revision} etc. are defined in properties
     const localProps = this.extractProperties(project.properties);
     context.properties = { ...context.properties, ...localProps };
 
     // Set project coordinates for ${project.*} references
+    // IMPORTANT: Resolve any property placeholders in version (e.g., ${revision})
     context.projectGroupId = project.groupId || project.parent?.groupId || context.projectGroupId;
     context.projectArtifactId = project.artifactId || context.projectArtifactId;
-    context.projectVersion = project.version || project.parent?.version || context.projectVersion;
+    
+    // Resolve version - it might be ${revision} or similar
+    let rawVersion = project.version || project.parent?.version || context.projectVersion || '';
+    context.projectVersion = this.resolveProperty(String(rawVersion), context.properties);
 
-    // Add standard Maven properties
+    // Add standard Maven properties (after resolving version)
     this.addMavenProperties(context, project);
 
     // Add local dependencyManagement (override parent)
@@ -353,6 +358,7 @@ export class PomParser {
       path.resolve(path.dirname(currentPomPath), '..', '..', `${artifactId}`, 'pom.xml'),
     ];
 
+    // First try local paths
     for (const bomPath of possiblePaths) {
       try {
         await fs.access(bomPath);
@@ -371,6 +377,17 @@ export class PomParser {
       } catch {
         // Try next path
         continue;
+      }
+    }
+
+    // If not found locally, try to download from Maven Central
+    const bomVersions = await this.downloadBomFromMaven(groupId, artifactId, version, context);
+    if (bomVersions.size > 0) {
+      this.bomCache.set(bomKey, bomVersions);
+      for (const [key, value] of bomVersions) {
+        if (!context.managedVersions.has(key)) {
+          context.managedVersions.set(key, value);
+        }
       }
     }
 

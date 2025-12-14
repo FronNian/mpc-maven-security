@@ -114,7 +114,7 @@ npm run build
 
 - **OSV (Open Source Vulnerabilities)** - Google 维护的开源漏洞数据库
 
-### 可选数据源
+### 可选数据源（推荐配置 Snyk）
 
 通过环境变量配置额外数据源以获取更全面的漏洞信息：
 
@@ -125,6 +125,7 @@ npm run build
       "command": "npx",
       "args": ["-y", "mcp-maven-security"],
       "env": {
+        "SNYK_TOKEN": "your-snyk-token",
         "OSS_INDEX_USER": "your-email",
         "OSS_INDEX_TOKEN": "your-token",
         "NVD_API_KEY": "your-nvd-api-key"
@@ -134,10 +135,11 @@ npm run build
 }
 ```
 
-| 数据源 | 说明 | 注册地址 |
-|--------|------|----------|
-| OSS Index | Sonatype 漏洞索引 | https://ossindex.sonatype.org/ |
-| NVD | 美国国家漏洞数据库 | https://nvd.nist.gov/developers/request-an-api-key |
+| 数据源 | 说明 | 免费额度 | 注册地址 |
+|--------|------|----------|----------|
+| **Snyk** ⭐ | 漏洞覆盖最全，推荐 | 200次/月 | <https://app.snyk.io/account> |
+| OSS Index | Sonatype 漏洞索引 | 无限制 | <https://ossindex.sonatype.org/> |
+| NVD | 美国国家漏洞数据库 | 无限制 | <https://nvd.nist.gov/developers/request-an-api-key> |
 
 ## 📋 报告示例
 

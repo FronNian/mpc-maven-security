@@ -50,7 +50,7 @@ export interface ScanResult {
 
 // ============ Data Source Types ============
 
-export type DataSourceName = 'OSV' | 'OSS_INDEX' | 'NVD';
+export type DataSourceName = 'OSV' | 'OSS_INDEX' | 'NVD' | 'SNYK';
 
 export interface VulnerabilityQuery {
   ecosystem: 'Maven';
