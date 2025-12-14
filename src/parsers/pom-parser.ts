@@ -395,10 +395,131 @@ export class PomParser {
   }
 
   /**
-   * Parse a BOM file and extract its managed versions
+   * Download BOM from Maven Central and extract managed versions
+   * Recursively processes nested BOM imports (e.g., spring-boot-dependencies)
    */
-  private async parseBomFile(bomPath: string, parentContext: ParseContext): Promise<Map<string, string>> {
+  private async downloadBomFromMaven(
+    groupId: string,
+    artifactId: string,
+    version: string,
+    context: ParseContext,
+    depth: number = 0
+  ): Promise<Map<string, string>> {
     const versions = new Map<string, string>();
+    
+    // Prevent infinite recursion
+    if (depth > 5) {
+      return versions;
+    }
+
+    const bomKey = `${groupId}:${artifactId}:${version}`;
+    
+    // Check cache first (avoid re-downloading)
+    if (this.bomCache.has(bomKey)) {
+      return new Map(this.bomCache.get(bomKey)!);
+    }
+    
+    try {
+      // Convert groupId to path format (e.g., org.springframework.boot -> org/springframework/boot)
+      const groupPath = groupId.replace(/\./g, '/');
+      const url = `https://repo1.maven.org/maven2/${groupPath}/${artifactId}/${version}/${artifactId}-${version}.pom`;
+      
+      // Fetch the POM file from Maven Central
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'mcp-maven-security/1.0'
+        }
+      });
+      
+      if (!response.ok) {
+        return versions;
+      }
+      
+      const content = await response.text();
+      const pom = this.parser.parse(content) as PomXml;
+      
+      if (!pom.project) return versions;
+
+      // Build BOM context with properties from the downloaded POM
+      const bomProps = this.extractProperties(pom.project.properties);
+      const bomContext: ParseContext = {
+        properties: { ...context.properties, ...bomProps },
+        managedVersions: new Map(),
+        projectGroupId: groupId,
+        projectArtifactId: artifactId,
+        projectVersion: version
+      };
+
+      // Add standard Maven properties
+      bomContext.properties['project.version'] = version;
+      bomContext.properties['project.groupId'] = groupId;
+      bomContext.properties['project.artifactId'] = artifactId;
+
+      // Collect nested BOM imports to process after regular dependencies
+      const nestedBomImports: Array<{ groupId: string; artifactId: string; version: string }> = [];
+
+      // Extract managed versions from dependencyManagement
+      const managedDeps = pom.project.dependencyManagement?.dependencies?.dependency;
+      if (managedDeps) {
+        const depArray = Array.isArray(managedDeps) ? managedDeps : [managedDeps];
+        for (const dep of depArray) {
+          if (dep.groupId && dep.artifactId && dep.version) {
+            const depGroupId = this.resolveProperty(String(dep.groupId), bomContext.properties);
+            const depArtifactId = this.resolveProperty(String(dep.artifactId), bomContext.properties);
+            const depVersion = this.resolveProperty(String(dep.version), bomContext.properties);
+            
+            // Handle nested BOM imports (scope=import, type=pom)
+            if (dep.scope === 'import' && dep.type === 'pom') {
+              nestedBomImports.push({
+                groupId: depGroupId,
+                artifactId: depArtifactId,
+                version: depVersion
+              });
+            } else {
+              versions.set(`${depGroupId}:${depArtifactId}`, depVersion);
+            }
+          }
+        }
+      }
+
+      // Process nested BOM imports recursively
+      for (const nestedBom of nestedBomImports) {
+        const nestedVersions = await this.downloadBomFromMaven(
+          nestedBom.groupId,
+          nestedBom.artifactId,
+          nestedBom.version,
+          bomContext,
+          depth + 1
+        );
+        
+        // Add nested versions (don't override existing - parent BOM takes precedence)
+        for (const [key, value] of nestedVersions) {
+          if (!versions.has(key)) {
+            versions.set(key, value);
+          }
+        }
+      }
+
+      // Cache the result
+      this.bomCache.set(bomKey, new Map(versions));
+    } catch {
+      // Failed to download or parse BOM from Maven Central
+    }
+
+    return versions;
+  }
+
+  /**
+   * Parse a BOM file and extract its managed versions
+   * Recursively processes nested BOM imports (both local and remote)
+   */
+  private async parseBomFile(bomPath: string, parentContext: ParseContext, depth: number = 0): Promise<Map<string, string>> {
+    const versions = new Map<string, string>();
+    
+    // Prevent infinite recursion
+    if (depth > 5) {
+      return versions;
+    }
     
     try {
       const content = await fs.readFile(bomPath, 'utf-8');
@@ -406,8 +527,29 @@ export class PomParser {
       
       if (!pom.project) return versions;
 
-      // Build BOM context (may have its own parent)
-      const bomContext = await this.buildContext(bomPath, pom.project, parentContext);
+      // Build BOM context with properties (don't use buildContext to avoid circular BOM processing)
+      const bomProps = this.extractProperties(pom.project.properties);
+      const bomContext: ParseContext = {
+        properties: { ...parentContext.properties, ...bomProps },
+        managedVersions: new Map(),
+        projectGroupId: pom.project.groupId || pom.project.parent?.groupId,
+        projectArtifactId: pom.project.artifactId,
+        projectVersion: pom.project.version || pom.project.parent?.version
+      };
+
+      // Add standard Maven properties
+      if (bomContext.projectVersion) {
+        bomContext.properties['project.version'] = bomContext.projectVersion;
+      }
+      if (bomContext.projectGroupId) {
+        bomContext.properties['project.groupId'] = bomContext.projectGroupId;
+      }
+      if (bomContext.projectArtifactId) {
+        bomContext.properties['project.artifactId'] = bomContext.projectArtifactId;
+      }
+
+      // Collect nested BOM imports to process
+      const nestedBomImports: Array<{ groupId: string; artifactId: string; version: string }> = [];
 
       // Extract managed versions
       const managedDeps = pom.project.dependencyManagement?.dependencies?.dependency;
@@ -419,9 +561,53 @@ export class PomParser {
             const artifactId = this.resolveProperty(String(dep.artifactId), bomContext.properties);
             const version = this.resolveProperty(String(dep.version), bomContext.properties);
             
-            // Skip BOM imports within BOM
-            if (dep.scope !== 'import') {
+            // Handle nested BOM imports (scope=import, type=pom)
+            if (dep.scope === 'import' && dep.type === 'pom') {
+              nestedBomImports.push({ groupId, artifactId, version });
+            } else {
               versions.set(`${groupId}:${artifactId}`, version);
+            }
+          }
+        }
+      }
+
+      // Process nested BOM imports recursively
+      for (const nestedBom of nestedBomImports) {
+        // First try to find nested BOM locally
+        const possiblePaths = [
+          path.resolve(path.dirname(bomPath), '..', `${nestedBom.artifactId}`, 'pom.xml'),
+          path.resolve(path.dirname(bomPath), `${nestedBom.artifactId}`, 'pom.xml'),
+        ];
+
+        let nestedVersions: Map<string, string> | null = null;
+
+        // Try local paths first
+        for (const nestedBomPath of possiblePaths) {
+          try {
+            await fs.access(nestedBomPath);
+            nestedVersions = await this.parseBomFile(nestedBomPath, bomContext, depth + 1);
+            break;
+          } catch {
+            continue;
+          }
+        }
+
+        // If not found locally, download from Maven Central
+        if (!nestedVersions || nestedVersions.size === 0) {
+          nestedVersions = await this.downloadBomFromMaven(
+            nestedBom.groupId,
+            nestedBom.artifactId,
+            nestedBom.version,
+            bomContext,
+            depth + 1
+          );
+        }
+
+        // Add nested versions (don't override existing - parent BOM takes precedence)
+        if (nestedVersions) {
+          for (const [key, value] of nestedVersions) {
+            if (!versions.has(key)) {
+              versions.set(key, value);
             }
           }
         }
@@ -672,50 +858,80 @@ export class PomParser {
 
   /**
    * Parse a multi-module Maven project
-   * First builds full context from root, then passes to all modules
+   * IMPORTANT: First builds COMPLETE version context from root (including all BOMs),
+   * then passes this context to all modules for dependency resolution
    */
   async parseMultiModule(projectPath: string): Promise<ParseResult> {
     const pomPath = path.join(projectPath, 'pom.xml');
     
-    // Parse root POM first to get full context
-    const rootResult = await this.parse(pomPath);
-    
-    if (rootResult.modules.length === 0) {
-      return rootResult;
-    }
-
-    // Build root context to pass to modules
+    // Step 1: Read and parse root POM
     const content = await fs.readFile(pomPath, 'utf-8');
     const pom = this.parser.parse(content) as PomXml;
-    const rootContext = pom.project 
-      ? await this.buildContext(pomPath, pom.project)
-      : { properties: {}, managedVersions: new Map<string, string>() };
+    
+    if (!pom.project) {
+      throw createError(
+        ErrorCode.INVALID_POM_STRUCTURE,
+        'Invalid POM structure: missing project element',
+        { path: pomPath }
+      );
+    }
 
-    // Recursively parse all modules with inherited context
-    const allDependencies: Dependency[] = [...rootResult.dependencies];
+    // Step 2: Build COMPLETE root context first (this downloads all BOMs including Spring Boot)
+    // This is the key - we build the full context BEFORE parsing any modules
+    const rootContext = await this.buildContext(pomPath, pom.project);
+    
+    // Log context size for debugging
+    console.log(`[POM Parser] Root context built with ${rootContext.managedVersions.size} managed versions`);
+
+    // Step 3: Extract root project info
+    const rawName = pom.project.name || pom.project.artifactId || 'unknown';
+    const projectName = this.resolveProperty(String(rawName), rootContext.properties);
+    const projectVersion = rootContext.projectVersion || '0.0.0';
+
+    // Step 4: Extract root dependencies using the complete context
+    const rootDependencies = this.extractDependencies(pom.project, rootContext);
+
+    // Step 5: Extract modules
+    const modules = this.extractModules(pom.project);
+
+    if (modules.length === 0) {
+      return {
+        projectName,
+        projectVersion,
+        dependencies: rootDependencies,
+        modules
+      };
+    }
+
+    // Step 6: Parse all modules with the COMPLETE inherited context
+    const allDependencies: Dependency[] = [...rootDependencies];
     const seen = new Set<string>();
     
     // Track seen dependencies from root
-    for (const dep of rootResult.dependencies) {
+    for (const dep of rootDependencies) {
       seen.add(`${dep.groupId}:${dep.artifactId}:${dep.version}`);
     }
 
     await this.parseModulesRecursive(
       projectPath, 
-      rootResult.modules, 
-      rootContext, 
+      modules, 
+      rootContext,  // Pass the complete context with all BOM versions
       allDependencies, 
       seen
     );
 
     return {
-      ...rootResult,
-      dependencies: allDependencies
+      projectName,
+      projectVersion,
+      dependencies: allDependencies,
+      modules
     };
   }
 
   /**
    * Recursively parse modules with inherited context
+   * IMPORTANT: Uses the inherited context directly without re-resolving parent chain
+   * This ensures all BOM versions from root are available
    */
   private async parseModulesRecursive(
     basePath: string,
@@ -734,10 +950,11 @@ export class PomParser {
         
         if (!pom.project) continue;
 
-        // Build module context with parent context inherited
-        const moduleContext = await this.buildContext(modulePomPath, pom.project, parentContext);
+        // Build module context - start with inherited parent context
+        // This preserves all BOM versions from root
+        const moduleContext = await this.buildModuleContext(modulePomPath, pom.project, parentContext);
         
-        // Extract dependencies
+        // Extract dependencies using the complete context
         const moduleDeps = this.extractDependencies(pom.project, moduleContext);
         
         // Add unique dependencies
@@ -749,22 +966,67 @@ export class PomParser {
           }
         }
 
-        // Handle nested modules
+        // Handle nested modules (e.g., lynflow-framework has sub-modules)
         const nestedModules = this.extractModules(pom.project);
         if (nestedModules.length > 0) {
           await this.parseModulesRecursive(
             path.join(basePath, moduleName),
             nestedModules,
-            moduleContext,
+            moduleContext,  // Pass module context to nested modules
             allDependencies,
             seen
           );
         }
-      } catch {
-        // Skip modules that can't be parsed
+      } catch (error) {
+        // Log and skip modules that can't be parsed
+        console.error(`[POM Parser] Failed to parse module ${moduleName}: ${error}`);
         continue;
       }
     }
+  }
+
+  /**
+   * Build context for a module, inheriting from parent context
+   * This is a simplified version that doesn't re-resolve the parent chain
+   * since we already have the complete context from root
+   */
+  private async buildModuleContext(
+    modulePomPath: string,
+    project: NonNullable<PomXml['project']>,
+    parentContext: ParseContext
+  ): Promise<ParseContext> {
+    // Start with inherited parent context (contains all BOM versions)
+    const context: ParseContext = {
+      properties: { ...parentContext.properties },
+      managedVersions: new Map(parentContext.managedVersions),
+      projectGroupId: parentContext.projectGroupId,
+      projectArtifactId: parentContext.projectArtifactId,
+      projectVersion: parentContext.projectVersion
+    };
+
+    // Add module's local properties (override parent)
+    const localProps = this.extractProperties(project.properties);
+    context.properties = { ...context.properties, ...localProps };
+
+    // Update project coordinates for this module
+    context.projectGroupId = project.groupId || project.parent?.groupId || context.projectGroupId;
+    context.projectArtifactId = project.artifactId || context.projectArtifactId;
+    
+    // Resolve version - it might be ${revision} or similar
+    const rawVersion = project.version || project.parent?.version || context.projectVersion || '';
+    context.projectVersion = this.resolveProperty(String(rawVersion), context.properties);
+
+    // Update Maven properties for this module
+    this.addMavenProperties(context, project);
+
+    // Process module's own dependencyManagement (if any)
+    // This handles cases where a module adds its own managed dependencies
+    await this.processDependencyManagement(modulePomPath, project, context);
+
+    // Process active profiles
+    this.processProfiles(project, context);
+
+    return context;
   }
 
   /**
