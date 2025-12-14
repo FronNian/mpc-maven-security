@@ -33,12 +33,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FronNian/mcp-maven-security.git"
+    "url": "git+https://github.com/FronNian/mpc-maven-security.git"
   },
   "bugs": {
-    "url": "https://github.com/FronNian/mcp-maven-security/issues"
+    "url": "https://github.com/FronNian/mpc-maven-security/issues"
   },
-  "homepage": "https://github.com/FronNian/mcp-maven-security#readme",
+  "homepage": "https://github.com/FronNian/mpc-maven-security#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^11.0.0",

@@ -56,8 +56,8 @@ npm install -g mcp-maven-security
 ### 方式三：本地开发
 
 ```bash
-git clone https://github.com/FronNian/mcp-maven-security.git
-cd mcp-maven-security
+git clone https://github.com/FronNian/mpc-maven-security.git
+cd mpc-maven-security
 npm install
 npm run build
 ```
