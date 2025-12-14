@@ -190,12 +190,31 @@ export class PomParser {
       : { properties: {}, managedVersions: new Map() };
 
     // Resolve parent chain first (recursively)
-    if (project.parent) {
+    // Only resolve parent if we don't have inherited context (to avoid duplicate work)
+    // OR if the parent is different from what we inherited
+    if (project.parent && !inheritedContext) {
       const parentContext = await this.resolveParentContext(currentPomPath, project.parent);
       if (parentContext) {
         // Parent properties are base, local overrides
         context.properties = { ...parentContext.properties, ...context.properties };
         // Parent managed versions are base, local overrides
+        for (const [key, value] of parentContext.managedVersions) {
+          if (!context.managedVersions.has(key)) {
+            context.managedVersions.set(key, value);
+          }
+        }
+      }
+    } else if (project.parent && inheritedContext) {
+      // Even with inherited context, we might need to resolve additional parent chain
+      // if the module's parent is different from the inherited context's source
+      const parentContext = await this.resolveParentContext(currentPomPath, project.parent);
+      if (parentContext) {
+        // Merge parent context, but inherited takes precedence
+        for (const [key, value] of Object.entries(parentContext.properties)) {
+          if (!(key in context.properties)) {
+            context.properties[key] = value;
+          }
+        }
         for (const [key, value] of parentContext.managedVersions) {
           if (!context.managedVersions.has(key)) {
             context.managedVersions.set(key, value);
@@ -583,17 +602,25 @@ export class PomParser {
       return null;
     }
 
-    const groupId = this.resolveProperty(String(dep.groupId), context.properties);
-    const artifactId = this.resolveProperty(String(dep.artifactId), context.properties);
+    const rawGroupId = String(dep.groupId);
+    const rawArtifactId = String(dep.artifactId);
+    const groupId = this.resolveProperty(rawGroupId, context.properties);
+    const artifactId = this.resolveProperty(rawArtifactId, context.properties);
     
     // Try to get version: explicit > dependencyManagement > UNKNOWN
     let version: string;
     if (dep.version) {
       version = this.resolveProperty(String(dep.version), context.properties);
     } else {
-      // Look up in managedVersions
-      const managedKey = `${groupId}:${artifactId}`;
-      version = context.managedVersions.get(managedKey) || 'UNKNOWN';
+      // Look up in managedVersions with multiple key formats
+      // 1. Try resolved groupId:artifactId
+      const resolvedKey = `${groupId}:${artifactId}`;
+      // 2. Try raw (unresolved) groupId:artifactId (for property-based keys)
+      const rawKey = `${rawGroupId}:${rawArtifactId}`;
+      
+      version = context.managedVersions.get(resolvedKey) 
+             || context.managedVersions.get(rawKey)
+             || 'UNKNOWN';
       
       // If still contains ${}, try to resolve it
       if (version.includes('${')) {
@@ -603,6 +630,8 @@ export class PomParser {
 
     // Final check: if version still has unresolved placeholders, mark as UNKNOWN
     if (version.includes('${')) {
+      // Log for debugging - helps identify missing properties
+      console.error(`[POM Parser] Unresolved version for ${groupId}:${artifactId}: ${version}`);
       version = 'UNKNOWN';
     }
 
