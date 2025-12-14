@@ -6,7 +6,7 @@
 import { DataSourceName, Vulnerability, VulnerabilityQuery } from '../types/index.js';
 import { BaseDataSourceClient } from './data-source.js';
 import { classifySeverity } from '../utils/severity.js';
-import { retryWithBackoff } from '../utils/retry.js';
+// retryWithBackoff removed - 404 is normal for NVD (no CVE found)
 
 const NVD_API_URL = 'https://services.nvd.nist.gov/rest/json/cves/2.0';
 const MAX_BATCH_SIZE = 100;
@@ -117,16 +117,22 @@ export class NvdClient extends BaseDataSourceClient {
         headers['apiKey'] = this.apiKey;
       }
 
-      const response = await retryWithBackoff(async () => {
-        const url = `${NVD_API_URL}?cpeName=${encodeURIComponent(cpeSearch)}`;
-        const res = await fetch(url, { headers });
+      const url = `${NVD_API_URL}?cpeName=${encodeURIComponent(cpeSearch)}`;
+      const res = await fetch(url, { headers });
 
-        if (!res.ok) {
-          throw new Error(`NVD API error: ${res.status}`);
-        }
+      // 404 is normal - means no CVE found for this package (which is good!)
+      // Don't treat it as an error
+      if (res.status === 404) {
+        return [];
+      }
 
-        return res.json() as Promise<NvdResponse>;
-      });
+      if (!res.ok) {
+        // Only log non-404 errors (rate limiting, server errors, etc.)
+        console.error(`NVD API error ${res.status} for ${query.name}:${query.version}`);
+        return [];
+      }
+
+      const response = await res.json() as NvdResponse;
 
       if (!response.vulnerabilities || response.vulnerabilities.length === 0) {
         return [];
@@ -134,7 +140,8 @@ export class NvdClient extends BaseDataSourceClient {
 
       return response.vulnerabilities.map(v => this.mapVulnerability(v.cve, groupId, artifactId));
     } catch (error) {
-      console.error(`NVD query failed for ${query.name}:${query.version}:`, error);
+      // Only log actual network/parsing errors, not 404s
+      console.error(`NVD query error for ${query.name}:${query.version}:`, error);
       return [];
     }
   }
