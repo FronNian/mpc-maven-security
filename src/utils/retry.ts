@@ -35,17 +35,50 @@ function calculateDelay(attempt: number, baseDelay: number, maxDelay: number): n
 function defaultShouldRetry(error: unknown): boolean {
   if (error instanceof Error) {
     const message = error.message.toLowerCase();
+    
     // Retry on network errors
-    if (message.includes('network') || message.includes('timeout') || message.includes('econnrefused')) {
+    if (
+      message.includes('network') ||
+      message.includes('timeout') ||
+      message.includes('econnrefused') ||
+      message.includes('econnreset') ||
+      message.includes('socket') ||
+      message.includes('fetch failed') ||
+      message.includes('tls') ||
+      message.includes('ssl') ||
+      message.includes('certificate')
+    ) {
       return true;
     }
+    
     // Retry on rate limiting
     if (message.includes('429') || message.includes('rate limit')) {
       return true;
     }
+    
     // Retry on server errors
     if (message.includes('500') || message.includes('502') || message.includes('503') || message.includes('504')) {
       return true;
+    }
+
+    // Check cause for nested errors (Node.js fetch wraps errors)
+    const cause = (error as Error & { cause?: Error }).cause;
+    if (cause instanceof Error) {
+      const causeMessage = cause.message.toLowerCase();
+      const causeCode = (cause as Error & { code?: string }).code?.toLowerCase() || '';
+      
+      if (
+        causeMessage.includes('econnreset') ||
+        causeMessage.includes('econnrefused') ||
+        causeMessage.includes('etimedout') ||
+        causeMessage.includes('socket') ||
+        causeMessage.includes('tls') ||
+        causeCode === 'econnreset' ||
+        causeCode === 'econnrefused' ||
+        causeCode === 'etimedout'
+      ) {
+        return true;
+      }
     }
   }
   return false;

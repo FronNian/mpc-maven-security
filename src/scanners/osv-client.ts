@@ -101,8 +101,11 @@ export class OsvClient extends BaseDataSourceClient {
     }
 
     if (validQueries.length === 0) {
+      console.log('[OSV] No valid queries to process (all have UNKNOWN version)');
       return results;
     }
+
+    console.log(`[OSV] Querying ${validQueries.length} dependencies...`);
 
     // Build batch request only for valid queries
     const batchQueries = validQueries.map(q => ({
@@ -114,34 +117,53 @@ export class OsvClient extends BaseDataSourceClient {
     }));
 
     try {
-      const response = await retryWithBackoff(async () => {
-        const res = await fetch(`${OSV_API_URL}/querybatch`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ queries: batchQueries })
-        });
+      const response = await retryWithBackoff(
+        async () => {
+          // Use AbortController for timeout
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
-        if (!res.ok) {
-          throw new Error(`OSV API error: ${res.status}`);
+          try {
+            const res = await fetch(`${OSV_API_URL}/querybatch`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ queries: batchQueries }),
+              signal: controller.signal
+            });
+
+            if (!res.ok) {
+              throw new Error(`OSV API error: ${res.status}`);
+            }
+
+            return res.json() as Promise<OsvBatchResponse>;
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        },
+        {
+          maxRetries: 5, // More retries for network issues
+          baseDelayMs: 2000, // Start with 2s delay
+          maxDelayMs: 60000 // Max 60s delay
         }
-
-        return res.json() as Promise<OsvBatchResponse>;
-      });
+      );
 
       // Process results - map back to validQueries indices
+      let vulnCount = 0;
       for (let i = 0; i < validQueries.length; i++) {
         const query = validQueries[i];
         const key = this.generateQueryKey(query);
         const queryResult = response.results[i];
 
-        if (queryResult?.vulns) {
+        if (queryResult?.vulns && queryResult.vulns.length > 0) {
           const vulnerabilities = queryResult.vulns.map(v => this.mapVulnerability(v));
           results.set(key, vulnerabilities);
+          vulnCount += vulnerabilities.length;
         }
       }
+      console.log(`[OSV] Query complete. Found ${vulnCount} vulnerabilities across ${validQueries.length} dependencies`);
     } catch (error) {
       // Log error but don't throw - return empty results
-      console.error('OSV batch query failed:', error);
+      console.error('[OSV] Batch query failed:', error);
     }
 
     return results;
