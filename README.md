@@ -20,7 +20,7 @@
 
 ## 🚀 快速开始
 
-### 方式一：npx 直接运行（推荐）
+### 方式一：从 GitHub 直接运行（推荐）
 
 无需安装，在 MCP 配置文件中添加：
 
@@ -29,31 +29,13 @@
   "mcpServers": {
     "maven-security": {
       "command": "npx",
-      "args": ["-y", "mcp-maven-security"]
+      "args": ["-y", "github:FronNian/mpc-maven-security"]
     }
   }
 }
 ```
 
-### 方式二：全局安装
-
-```bash
-npm install -g mcp-maven-security
-```
-
-配置：
-
-```json
-{
-  "mcpServers": {
-    "maven-security": {
-      "command": "mcp-maven-security"
-    }
-  }
-}
-```
-
-### 方式三：本地开发
+### 方式二：本地克隆运行
 
 ```bash
 git clone https://github.com/FronNian/mpc-maven-security.git
