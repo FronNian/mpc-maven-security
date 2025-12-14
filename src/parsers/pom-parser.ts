@@ -245,12 +245,15 @@ export class PomParser {
     const deps: Dependency[] = [];
     const seen = new Set<string>();
 
+    // Build version map from dependencyManagement
+    const managedVersions = this.extractManagedVersions(project, properties);
+
     // Extract from dependencies section
     const rawDeps = project.dependencies?.dependency;
     if (rawDeps) {
       const depArray = Array.isArray(rawDeps) ? rawDeps : [rawDeps];
       for (const dep of depArray) {
-        const parsed = this.parseDependency(dep, properties);
+        const parsed = this.parseDependency(dep, properties, managedVersions);
         if (parsed) {
           const key = `${parsed.groupId}:${parsed.artifactId}:${parsed.version}`;
           if (!seen.has(key)) {
@@ -265,11 +268,37 @@ export class PomParser {
   }
 
   /**
+   * Extract managed versions from dependencyManagement section
+   */
+  private extractManagedVersions(
+    project: NonNullable<PomXml['project']>,
+    properties: Record<string, string>
+  ): Map<string, string> {
+    const versions = new Map<string, string>();
+    
+    const managedDeps = project.dependencyManagement?.dependencies?.dependency;
+    if (managedDeps) {
+      const depArray = Array.isArray(managedDeps) ? managedDeps : [managedDeps];
+      for (const dep of depArray) {
+        if (dep.groupId && dep.artifactId && dep.version) {
+          const groupId = this.resolveProperty(dep.groupId, properties);
+          const artifactId = this.resolveProperty(dep.artifactId, properties);
+          const version = this.resolveProperty(dep.version, properties);
+          versions.set(`${groupId}:${artifactId}`, version);
+        }
+      }
+    }
+    
+    return versions;
+  }
+
+  /**
    * Parse a single dependency element
    */
   private parseDependency(
     dep: PomDependency,
-    properties: Record<string, string>
+    properties: Record<string, string>,
+    managedVersions?: Map<string, string>
   ): Dependency | null {
     if (!dep.groupId || !dep.artifactId) {
       return null;
@@ -277,9 +306,17 @@ export class PomParser {
 
     const groupId = this.resolveProperty(dep.groupId, properties);
     const artifactId = this.resolveProperty(dep.artifactId, properties);
-    const version = dep.version 
-      ? this.resolveProperty(dep.version, properties) 
-      : 'UNKNOWN';
+    
+    // Try to get version: explicit > dependencyManagement > UNKNOWN
+    let version: string;
+    if (dep.version) {
+      version = this.resolveProperty(dep.version, properties);
+    } else if (managedVersions) {
+      const managedKey = `${groupId}:${artifactId}`;
+      version = managedVersions.get(managedKey) || 'UNKNOWN';
+    } else {
+      version = 'UNKNOWN';
+    }
 
     return {
       groupId,

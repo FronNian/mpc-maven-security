@@ -104,13 +104,20 @@ export class OssIndexClient extends BaseDataSourceClient {
   ): Promise<Map<string, Vulnerability[]>> {
     const results = new Map<string, Vulnerability[]>();
 
-    // Initialize results with empty arrays
+    // Filter out queries with UNKNOWN version
+    const validQueries = queries.filter(q => q.version && q.version !== 'UNKNOWN');
+
+    // Initialize results with empty arrays for all queries
     for (const query of queries) {
       results.set(this.generateQueryKey(query), []);
     }
 
-    // Build coordinates in purl format
-    const coordinates = queries.map(q => {
+    if (validQueries.length === 0) {
+      return results;
+    }
+
+    // Build coordinates in purl format only for valid queries
+    const coordinates = validQueries.map(q => {
       const [groupId, artifactId] = q.name.split(':');
       return `pkg:maven/${groupId}/${artifactId}@${q.version}`;
     });
@@ -130,9 +137,9 @@ export class OssIndexClient extends BaseDataSourceClient {
         return res.json() as Promise<OssIndexComponent[]>;
       });
 
-      // Process results
-      for (let i = 0; i < queries.length; i++) {
-        const query = queries[i];
+      // Process results - map back to validQueries indices
+      for (let i = 0; i < validQueries.length; i++) {
+        const query = validQueries[i];
         const key = this.generateQueryKey(query);
         const component = response[i];
 

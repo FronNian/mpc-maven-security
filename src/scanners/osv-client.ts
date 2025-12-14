@@ -92,13 +92,20 @@ export class OsvClient extends BaseDataSourceClient {
   ): Promise<Map<string, Vulnerability[]>> {
     const results = new Map<string, Vulnerability[]>();
 
-    // Initialize results with empty arrays
+    // Filter out queries with UNKNOWN version
+    const validQueries = queries.filter(q => q.version && q.version !== 'UNKNOWN');
+
+    // Initialize results with empty arrays for all queries
     for (const query of queries) {
       results.set(this.generateQueryKey(query), []);
     }
 
-    // Build batch request
-    const batchQueries = queries.map(q => ({
+    if (validQueries.length === 0) {
+      return results;
+    }
+
+    // Build batch request only for valid queries
+    const batchQueries = validQueries.map(q => ({
       package: {
         ecosystem: 'Maven',
         name: q.name
@@ -121,9 +128,9 @@ export class OsvClient extends BaseDataSourceClient {
         return res.json() as Promise<OsvBatchResponse>;
       });
 
-      // Process results
-      for (let i = 0; i < queries.length; i++) {
-        const query = queries[i];
+      // Process results - map back to validQueries indices
+      for (let i = 0; i < validQueries.length; i++) {
+        const query = validQueries[i];
         const key = this.generateQueryKey(query);
         const queryResult = response.results[i];
 

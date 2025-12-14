@@ -1,6 +1,6 @@
 {
   "name": "mcp-maven-security",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP tool for scanning Maven project dependency vulnerabilities",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -103,6 +103,11 @@ export class NvdClient extends BaseDataSourceClient {
   private async querySingle(query: VulnerabilityQuery): Promise<Vulnerability[]> {
     const [groupId, artifactId] = query.name.split(':');
     
+    // Skip queries with UNKNOWN version - can't query NVD without a specific version
+    if (query.version === 'UNKNOWN' || !query.version) {
+      return [];
+    }
+    
     // Build CPE search string for Maven packages
     const cpeSearch = `cpe:2.3:a:*:${artifactId}:${query.version}:*:*:*:*:*:*:*`;
 
