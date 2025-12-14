@@ -1,0 +1,64 @@
+{
+  "name": "mcp-maven-security",
+  "version": "1.0.0",
+  "description": "MCP tool for scanning Maven project dependency vulnerabilities",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "bin": {
+    "mcp-maven-security": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "maven",
+    "security",
+    "vulnerability",
+    "scanner",
+    "java",
+    "pom",
+    "osv",
+    "cve"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FronNian/mcp-maven-security.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FronNian/mcp-maven-security/issues"
+  },
+  "homepage": "https://github.com/FronNian/mcp-maven-security#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "better-sqlite3": "^11.0.0",
+    "fast-xml-parser": "^4.3.0",
+    "pdfkit": "^0.15.0",
+    "node-fetch": "^3.3.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^20.0.0",
+    "@types/pdfkit": "^0.13.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "fast-check": "^3.15.0",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

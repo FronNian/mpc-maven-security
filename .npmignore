@@ -1,0 +1,29 @@
+# Source files
+src/
+*.ts
+!*.d.ts
+
+# Config files
+tsconfig.json
+.eslintrc.json
+vitest.config.ts
+
+# IDE
+.idea/
+.vscode/
+.kiro/
+
+# Logs
+logs/
+*.log
+
+# Test
+coverage/
+*.test.ts
+
+# Dev dependencies
+node_modules/
+
+# Database (local)
+*.db
+*.sqlite
